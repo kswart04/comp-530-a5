@@ -48,7 +48,27 @@ Main/SQL/headers and Main/SQL/source (the build picks them up
 automatically). No other existing file may be changed, and test queries go
 only in Queries/Stage1.sql.
 
-<your specification for Stage 1 goes here>
+Technical Specification:
+1. Add JOIN and ON keyword tokens, following the existing lexer's keyword-matching coventions.
+2. Extend FROM using the following grammr structure:
+FromList: JoinExpr | FromList ',' JoinExpr
+JoinExpr: FromPrimary | JoinExpr JOIN FromPrimary ON CNF
+FromPrimary: table AS alias | '(' JoinExpr ')'
+CNF must be the same nonterminal used for WHERE conditions.
+3. JOIN must be left-associative tyhrough left-recursion. Perenthesis override grouping may nest arbitrarily and may surround a single table. Commas seperate complete join expressions.
+4. Every JOIN require ON. An ON condition accepts everything the existing WHERE condition grammr accepts. Do not add sematic restrictions in this stage.
+5. Represent each FROM item as a tree containing either a table name and alias, or a join's left side, right side, and ON condition. Preserve these trees in FromList and SFWQuery so Stage 2 can determine which aliases belong to each ON condition.
+6. Add the corresponding '%union' member, grammr types, construction helpers, and necessary griend declarations.
+7. Verbose printing must show join grouping and each join's ON condition clearly.
+8. Preserve existing non-JOIN behavious, including GROUP BY requiring WHERE. Every query that parses still receives OK in this stage.
+9. Record agreed design decisions in a comment block at the top of ParserTpes.h, to be updated at each stage.
+10. Before making changes, discuss unresolved decisions with me and propose thet est queries with expectedd results for my approval.
+11. Tests:
+a) Basic joins and left-associated join chains.
+b) Parenthesized and deeply nested joins.
+c) Joins mixed with comma-seperated tables.
+d) ON conditions exercising WHERE syntax.
+12. Verify all 17 queries in Test.sql still parse, and use checkQUeries.py --perse-only to check Test.sql, JoinExamples.sql, and Stage1.sql against the supplied schema. Inspect verbose output to confirm the grouping of J4, J5, and J12.
 
 ----------------------------------------------------------------------
 

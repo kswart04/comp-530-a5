@@ -1,0 +1,70 @@
+
+from os import listdir
+from os.path import isfile, join, abspath
+
+common_env = Environment()
+common_env.Append(CXXFLAGS = '-std=c++14 -Wall -g -O0')
+common_env.Append(CFLAGS = '-g -O0')
+
+# get the source files for the catalog
+srcDir = '../Main/Catalog/source'
+catalogSrc = [abspath(join(srcDir, f)) for f in listdir(srcDir) if isfile(join(srcDir, f)) and f[-3:] == '.cc']
+
+# get the source files for the record manager (the catalog needs them)
+srcDir = '../Main/Record/source'
+recordSrc = [abspath(join(srcDir, f)) for f in listdir(srcDir) if isfile(join(srcDir, f)) and f[-3:] == '.cc']
+
+# get the hand-written source files for the SQL parser.  The lexer and the
+# parser themselves are generated below, from Lexer.l and Parser.y
+srcDir = '../Main/SQL/source'
+sqlSrc = [abspath(join(srcDir, f)) for f in listdir(srcDir) if isfile(join(srcDir, f)) and f[-3:] == '.cc']
+
+# get the headers paths.  NOTE: do not put quotes around these!  SCons scans
+# these directories to work out which headers each source file depends on, and
+# a quoted path names a directory that does not exist -- the build still works,
+# but nothing is ever rebuilt when you edit a header.  "generated" comes first
+# so that the bison-generated Parser.tab.h can be found
+header_paths = Split("""
+	generated
+	../Main/Catalog/headers
+	../Main/Record/headers
+	../Main/SQL/headers
+""")
+
+# adds header folders
+common_env.Append(CPPPATH = header_paths)
+
+# run bison on the grammar, and flex on the lexer.  Both tools have to be
+# installed and on your path.  bison writes Parser.c and Parser.tab.h; flex
+# writes Lexer.c.  Everything lands in Build/generated.  The generated code
+# is C, not C++, and is compiled with the C compiler
+parserSrc = common_env.Command (['generated/Parser.c', 'generated/Parser.tab.h'],
+	'../Main/SQL/source/Parser.y',
+	'bison -d -o ${TARGETS[0]} --defines=${TARGETS[1]} $SOURCE')
+lexerSrc = common_env.Command ('generated/Lexer.c',
+	'../Main/SQL/source/Lexer.l',
+	'flex -o $TARGET $SOURCE')
+
+# the generated lexer includes Parser.h, so it cannot be compiled until bison has run
+common_env.Depends (lexerSrc, parserSrc)
+
+# Menu for selecting a specific build or all builds
+# if the -c or --clean option is included, the script will clean up
+# built and target files
+print("""
+What do you want to build/clean?\n
+1. The SQL semantic checker (bin/sqlCheck)
+
+Add a "c" to build with clang++, as on Clear: for example, 1c
+""")
+
+ans = input("Select the module you want to build or clean. ").strip()
+
+if ans.endswith("c"):
+	common_env.Replace(CXX = "clang++")
+	common_env.Replace(CC = "clang")
+	ans = ans[:-1]
+
+if ans == "1":
+	print("\nOK, building the SQL semantic checker.")
+	common_env.Program ('bin/sqlCheck', ['../Main/SQLTest/source/main.cc', parserSrc[0], lexerSrc, sqlSrc, catalogSrc, recordSrc])

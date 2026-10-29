@@ -40,6 +40,13 @@ SELECT n.n_name, SUM (s.s_acctbal)
 FROM supplier AS s JOIN nation AS n ON s.s_nationkey = n.n_nationkey
 GROUP BY n.n_name;
 
+-- S22.  the keywords are case-insensitive
+-- expect: OK
+SELECT n.n_name, r.r_name
+FROM nation AS n join region AS r oN n.n_regionkey = r.r_regionkey
+     Join supplier AS s On s.s_nationkey = n.n_nationkey;
+
+
 ---------------------------------------------------------------------------
 -- b) parenthesized and nested joins
 ---------------------------------------------------------------------------
@@ -71,6 +78,17 @@ FROM (nation AS n JOIN region AS r ON n.n_regionkey = r.r_regionkey;
 -- expect: PARSE ERROR
 SELECT r.r_name
 FROM region AS r JOIN (nation AS n JOIN supplier AS s ON n.n_nationkey = s.s_nationkey);
+
+-- S26.  empty parentheses in FROM
+-- expect: PARSE ERROR
+SELECT n.n_name
+FROM ();
+
+-- S27.  an ON inside parentheses with no JOIN
+-- expect: PARSE ERROR
+SELECT n.n_name
+FROM (nation AS n ON n.n_regionkey = 1);
+
 
 ---------------------------------------------------------------------------
 -- c) joins mixed with comma-separated tables
@@ -106,6 +124,27 @@ WHERE c.c_custkey = o.o_custkey AND c.c_nationkey = n.n_nationkey AND
 -- expect: PARSE ERROR
 SELECT n.n_name
 FROM nation AS n, region AS r ON r.r_regionkey = n.n_regionkey;
+
+-- S28.  three comma-separated items, one of them a nested parenthesized join
+-- expect: OK
+SELECT n.n_name, p.p_name
+FROM region AS r,
+     (nation AS n JOIN (supplier AS s JOIN partsupp AS ps ON s.s_suppkey = ps.ps_suppkey)
+      ON n.n_nationkey = s.s_nationkey),
+     part AS p
+WHERE r.r_regionkey = n.n_regionkey AND ps.ps_partkey = p.p_partkey;
+
+-- S29.  a comma inside parentheses
+-- expect: PARSE ERROR
+SELECT n.n_name
+FROM (nation AS n, region AS r);
+
+-- S30.  a trailing comma
+-- expect: PARSE ERROR
+SELECT n.n_name
+FROM nation AS n,
+WHERE n.n_nationkey > 1;
+
 
 ---------------------------------------------------------------------------
 -- d) ON conditions exercising WHERE syntax
@@ -144,6 +183,53 @@ FROM region AS r JOIN (nation AS n JOIN supplier AS s
 SELECT n.n_name
 FROM nation AS n JOIN region AS r ON
 WHERE n.n_nationkey > 1;
+
+-- S31.  arithmetic on both sides, with int, double, and string literals
+-- expect: OK
+SELECT l.l_orderkey
+FROM lineitem AS l JOIN partsupp AS ps
+     ON l.l_partkey = ps.ps_partkey AND
+        l.l_quantity * 2 + 1.5 > ps.ps_availqty - 10 AND
+        l.l_shipmode + "-x" = ps.ps_comment + "-x";
+
+-- S32.  <> in an ON condition
+-- expect: OK
+SELECT o.o_orderkey
+FROM orders AS o JOIN customer AS c ON o.o_custkey <> c.c_custkey;
+
+-- S33.  a parenthesized value in an ON condition
+-- expect: OK
+SELECT l.l_orderkey
+FROM lineitem AS l JOIN orders AS o
+     ON (l.l_tax + 1) * 2 = o.o_totalprice / (o.o_shippriority + 1);
+
+-- S34.  an AND inside parentheses is rejected in ON...
+-- expect: PARSE ERROR
+SELECT n.n_name
+FROM nation AS n JOIN region AS r
+     ON (n.n_regionkey = r.r_regionkey AND n.n_nationkey > 1);
+
+-- S35.  ...just as it is in WHERE
+-- expect: PARSE ERROR
+SELECT n.n_name
+FROM nation AS n, region AS r
+WHERE (n.n_regionkey = r.r_regionkey AND n.n_nationkey > 1);
+
+-- S36.  a joined table without AS
+-- expect: PARSE ERROR
+SELECT n.n_name
+FROM nation AS n JOIN region r ON n.n_regionkey = r.r_regionkey;
+
+-- S37.  JOIN twice in a row
+-- expect: PARSE ERROR
+SELECT n.n_name
+FROM nation AS n JOIN JOIN region AS r ON n.n_regionkey = r.r_regionkey;
+
+-- S38.  ON where JOIN should be
+-- expect: PARSE ERROR
+SELECT n.n_name
+FROM nation AS n ON region AS r ON n.n_regionkey = r.r_regionkey;
+
 
 ---------------------------------------------------------------------------
 -- reserved keywords

@@ -49,6 +49,123 @@
  *   - Queries/Stage1.sql.  Each "-- expect:" line gives the eventual semantic
  *     verdict (so a query that parses but breaks a Stage 2 rule is marked
  *     ERROR); Stage 1 runs them with checkQueries.py --parse-only.
+ *   - Tests are graded by mutation (a test counts if its verdict flips under
+ *     a breaking change), so every proposed test was kept, S1-S38, except
+ *     S23-S25.  Those put parentheses around a single table, which the
+ *     handout lists as a judgment call, so they were removed (the grammar
+ *     still accepts it).  The other identifiers were not renumbered.
+ *
+ * Stage 2: the semantic checks
+ *
+ *  Code organization
+ *   - Every ExprTree class has a virtual check (CheckContext &, string &err)
+ *     that returns the expression's type, or ExprType :: Error with the
+ *     reason in err.  The first error is propagated by return value; no
+ *     exceptions are used.
+ *   - CheckContext.h holds the type enum and the CheckContext: the aliases
+ *     visible to the current clause, every alias in the FROM clause, the
+ *     clause name, whether aggregates are allowed, whether we are inside an
+ *     aggregate, whether an aggregate was seen, and the attributes found
+ *     outside aggregates.
+ *   - SFWQuery :: check (allTables) returns "" for OK or the error message;
+ *     SQLStatement :: checkSFWQuery passes it through, and main.cc prints
+ *     "OK" or "ERROR: <message>".  Parsing, the join trees, and verbose
+ *     output are unchanged, and checking continues after a PARSE ERROR.
+ *
+ *  Types (int, double, string, bool)
+ *   - Literals have their own type; attributes have their catalog type.
+ *   - +: int + int is int; a double operand makes it double; string +
+ *     string is string (concatenation).  Anything else is an error.
+ *   - - * /: numbers only, with the same result rule (int / int is int).
+ *   - > < = <>: two numbers (int and double mix freely) or two strings give
+ *     bool.  Two bools may be compared with = or <> only.  Anything else is
+ *     an error.
+ *   - OR and NOT need bool operands; every WHERE and ON condition must be
+ *     bool.  (The grammar already guarantees this for parsed queries.)
+ *   - SUM and AVG need a number.  SUM keeps its argument's type; AVG is double.
+ *   - BOOL attributes are allowed only in = and <> against another bool.
+ *
+ *  References and scope
+ *   - Every FROM table must be in the catalog.  An alias may appear only
+ *     once in a FROM clause (an error otherwise); the same table may appear
+ *     under different aliases.  Names are matched case-sensitively.
+ *   - Every alias.attribute must name a FROM alias whose table has that
+ *     attribute, in SELECT, WHERE, GROUP BY, and ON.
+ *   - SELECT, WHERE, and GROUP BY see every FROM alias.  An ON condition
+ *     sees only the aliases in its join's two subtrees: not aliases joined
+ *     later in a chain, not aliases outside its parentheses, and not aliases
+ *     in other comma-separated items.
+ *
+ *  Aggregates and grouping
+ *   - Aggregates are allowed only in SELECT: an aggregate in ON, WHERE, or
+ *     GROUP BY is an error, and so is an aggregate nested inside another.
+ *   - The grouping rule applies when there is a GROUP BY or the SELECT has
+ *     an aggregate.  Then each selected value must either match a GROUP BY
+ *     expression exactly, or every attribute it uses outside aggregates must
+ *     itself be a GROUP BY item.  Constants and attributes inside aggregates
+ *     need no grouping; GROUP BY attributes need not be selected.  An
+ *     aggregate-only SELECT needs no GROUP BY.  A GROUP BY with no aggregate
+ *     in the SELECT is allowed, under the same rule.
+ *
+ *  Check order (the first error found is reported)
+ *   1. every FROM table exists, in source order;  2. no duplicate aliases;
+ *   3. ON conditions, inner joins before outer, left before right;
+ *   4. WHERE;  5. GROUP BY;  6. SELECT;  7. the grouping rule.
+ *   Within an expression, operands are checked left to right before the
+ *   operator itself.
+ *
+ *  Error messages
+ *   - "ERROR: " and then the problem, naming the table, alias, attribute,
+ *     or operand types involved.  Expressions are shown with the existing
+ *     toString () output (there is no SQL pretty-printer).
+ *
+ *  Tests
+ *   - Queries/Stage2.sql covers references, types, aggregates, grouping, and
+ *     ON scope, with valid and invalid cases, T1-T47 (every proposed test
+ *     was kept).  Its tests compare verdicts only, and avoid the judgment
+ *     calls above (duplicate aliases, BOOL, aggregates in WHERE / GROUP BY,
+ *     nested aggregates, expression grouping).  T46-T47 check that the
+ *     statement after a PARSE ERROR is still checked.
+ *
+ * Stage 3: mutation testing
+ *
+ *  Approach
+ *   - Ten breaking changes, applied one at a time as exact text edits.  For
+ *     each: back up the touched file(s), apply, rebuild, run checkQueries.py
+ *     (fresh catalog, CreateTables.sql first) on Test.sql, JoinExamples.sql,
+ *     Stage1.sql, Stage2.sql, and Stage3.sql, then restore from the backup,
+ *     confirm the file is byte-identical, rebuild, and confirm every query
+ *     file passes before the next mutation.
+ *   - Caught means some query's verdict flips: OK <-> ERROR for a semantic
+ *     mutation, a parsing verdict <-> PARSE ERROR for a grammar mutation.
+ *     Every flip was confirmed to come from the mutated rule only.
+ *   - Mutation details: (1) a missing table maps to a local empty-schema
+ *     table (the catalog's table map is never modified), so attribute checks
+ *     still apply; (2) a missing attribute is accepted as an int in SELECT
+ *     only; (3) number/string comparisons are accepted in WHERE only;
+ *     (4) SUM (not AVG) accepts a string; (5) + rejects two strings;
+ *     (6) the whole grouping rule is skipped; (7) an ON sees every FROM
+ *     alias; (8) aggregates are accepted in ON, an ON aggregate does not make
+ *     the query an aggregate query, and argument-type and nesting checks
+ *     are kept; (9) FromPrimary: '(' JoinExpr ')' removed; (10) FromList:
+ *     FromList ',' JoinExpr removed.
+ *
+ *  Results (expected verdict -> mutated verdict of the catching queries)
+ *   1  missing table accepted   Stage3 U1 (ERROR -> OK); nothing existing
+ *                               caught it, so U1 was added
+ *   2  missing SELECT attribute Test 13, Stage2 T6, T9 (ERROR -> OK)
+ *   3  WHERE number vs string   Test 3, 6, 15, Stage2 T21, T23, T41 (ERROR -> OK)
+ *   4  SUM of a string          Test 4, Stage2 T42 (ERROR -> OK)
+ *   5  string + string rejected Test 5, 12, 14, Stage1 S31, Stage2 T15 (OK -> ERROR)
+ *   6  grouping rule off        Test 2, Stage2 T29, T30, T31, T44 (ERROR -> OK)
+ *   7  ON scope widened         J6, J7, Stage1 S19, Stage2 T12, T13, T14, T35 (ERROR -> OK)
+ *   8  aggregates in ON         J9, Stage1 S18, Stage2 T26, T27, T43 (ERROR -> OK)
+ *   9  no parenthesized joins   12 queries, e.g. J5, J12 (OK -> PARSE ERROR),
+ *                               J6 (ERROR -> PARSE ERROR)
+ *   10 no comma FROM lists      25 queries, e.g. Test 1 (OK -> PARSE ERROR),
+ *                               Test 2 (ERROR -> PARSE ERROR)
+ *   All ten were caught.  All mutations were removed at the end, and every
+ *   query file passes.
  *****************************************************************************/
 
 #ifndef PARSER_TYPES_H
@@ -282,6 +399,68 @@ public:
 		}
 	}
 
+	// makes sure that every table in this tree is in the catalog; returns an
+	// error message, or "" if all of them are
+	string checkTables (map <string, MyDB_TablePtr> &allTables) {
+		if (isJoin) {
+			string err = left->checkTables (allTables);
+			if (err != "")
+				return err;
+			return right->checkTables (allTables);
+		}
+		if (allTables.count (tableName) == 0)
+			return "table " + tableName + " does not exist (alias " + alias + ")";
+		return "";
+	}
+
+	// adds every alias in this tree, and its table, to aliases; returns an
+	// error message if an alias is already there, or "" otherwise
+	string collectAliases (map <string, MyDB_TablePtr> &allTables, map <string, MyDB_TablePtr> &aliases) {
+		if (isJoin) {
+			string err = left->collectAliases (allTables, aliases);
+			if (err != "")
+				return err;
+			return right->collectAliases (allTables, aliases);
+		}
+		if (aliases.count (alias) > 0)
+			return "alias " + alias + " is used for more than one table in the FROM clause";
+		aliases[alias] = allTables[tableName];
+		return "";
+	}
+
+	// checks every ON condition in this tree, inner joins first and left
+	// before right.  Each ON sees only the aliases in its join's two subtrees.
+	// Puts this tree's aliases into myAliases; returns an error message, or ""
+	string checkOn (CheckContext &ctx, map <string, MyDB_TablePtr> &allAliases,
+		map <string, MyDB_TablePtr> &myAliases) {
+
+		if (!isJoin) {
+			myAliases[alias] = allAliases[alias];
+			return "";
+		}
+
+		map <string, MyDB_TablePtr> leftAliases;
+		map <string, MyDB_TablePtr> rightAliases;
+		string err = left->checkOn (ctx, allAliases, leftAliases);
+		if (err != "")
+			return err;
+		err = right->checkOn (ctx, allAliases, rightAliases);
+		if (err != "")
+			return err;
+
+		myAliases = leftAliases;
+		myAliases.insert (rightAliases.begin (), rightAliases.end ());
+		ctx.visible = myAliases;
+		for (auto a : onDisjunctions) {
+			ExprType t = a->check (ctx, err);
+			if (t == ExprType :: Error)
+				return err;
+			if (t != ExprType :: Bool)
+				return "the ON condition " + a->toString () + " is " + aTypeName (t) + ", not a bool";
+		}
+		return "";
+	}
+
 	friend struct SFWQuery;
 	#include "FriendDecls.h"
 };
@@ -377,6 +556,99 @@ public:
 			cout << "\t" << a->toString () << "\n";
 	}
 
+	// checks the query against the tables in the catalog; returns "" if the
+	// query is OK, and otherwise the reason (the first error found) it is not
+	string check (map <string, MyDB_TablePtr> &allTables) {
+
+		string err;
+
+		// every table in the FROM clause must exist...
+		for (auto a : tablesToProcess) {
+			err = a->checkTables (allTables);
+			if (err != "")
+				return err;
+		}
+
+		// ...and no alias can be used twice
+		map <string, MyDB_TablePtr> aliases;
+		for (auto a : tablesToProcess) {
+			err = a->collectAliases (allTables, aliases);
+			if (err != "")
+				return err;
+		}
+
+		CheckContext ctx;
+		for (auto &a : aliases)
+			ctx.allAliases.insert (a.first);
+
+		// the ON conditions, each of which sees only its own join's aliases
+		ctx.clause = "ON";
+		ctx.aggregatesAllowed = false;
+		for (auto a : tablesToProcess) {
+			map <string, MyDB_TablePtr> treeAliases;
+			err = a->checkOn (ctx, aliases, treeAliases);
+			if (err != "")
+				return err;
+		}
+
+		// from here on, every alias in the FROM clause is visible
+		ctx.visible = aliases;
+
+		ctx.clause = "WHERE";
+		for (auto a : allDisjunctions) {
+			ExprType t = a->check (ctx, err);
+			if (t == ExprType :: Error)
+				return err;
+			if (t != ExprType :: Bool)
+				return "the WHERE condition " + a->toString () + " is " + aTypeName (t) + ", not a bool";
+		}
+
+		ctx.clause = "GROUP BY";
+		for (auto a : groupingClauses) {
+			if (a->check (ctx, err) == ExprType :: Error)
+				return err;
+		}
+
+		// for each selected value, remember the attributes outside aggregates
+		ctx.clause = "SELECT";
+		ctx.aggregatesAllowed = true;
+		vector <vector <pair <string, string>>> outside;
+		for (auto a : valuesToSelect) {
+			ctx.attsOutsideAggregates.clear ();
+			if (a->check (ctx, err) == ExprType :: Error)
+				return err;
+			outside.push_back (ctx.attsOutsideAggregates);
+		}
+
+		// the grouping rule applies if there is a GROUP BY or an aggregate
+		if (groupingClauses.empty () && !ctx.sawAggregate)
+			return "";
+
+		// a selected value is grouped if it is exactly a GROUP BY expression,
+		// or if every attribute in it outside an aggregate is a GROUP BY attribute
+		set <string> groupExprs;
+		set <pair <string, string>> groupAtts;
+		for (auto g : groupingClauses) {
+			groupExprs.insert (g->toString ());
+			string alias, att;
+			if (g->isIdentifier (alias, att))
+				groupAtts.insert (make_pair (alias, att));
+		}
+		for (size_t i = 0; i < valuesToSelect.size (); i++) {
+			if (groupExprs.count (valuesToSelect[i]->toString ()) > 0)
+				continue;
+			for (auto &att : outside[i]) {
+				if (groupAtts.count (att) > 0)
+					continue;
+				string name = att.first + "." + att.second;
+				if (groupingClauses.empty ())
+					return name + " is selected but is not an aggregate, and the query has aggregates but no GROUP BY";
+				return name + " is selected but is not an aggregate and is not in the GROUP BY";
+			}
+		}
+		return "";
+	}
+
 	#include "FriendDecls.h"
 };
 
@@ -420,6 +692,12 @@ public:
 	
 	void printSFWQuery () {
 		myQuery.print ();
+	}
+
+	// checks the SFW query against the catalog's tables; returns "" if it is
+	// OK, and otherwise the reason it is not
+	string checkSFWQuery (map <string, MyDB_TablePtr> &allTables) {
+		return myQuery.check (allTables);
 	}
 
 	#include "FriendDecls.h"

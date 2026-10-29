@@ -97,7 +97,22 @@ Main/SQL/headers and Main/SQL/source (the build picks them up
 automatically). No other existing file may be changed, and test queries go
 only in Queries/Stage2.sql.
 
-<your specification for Stage 2 goes here>
+Technical Specification:
+1. Check each parsed 'SELECT ... FROM ... WHERE' query against the catalog. Preserve Stage 1 parsing, join trees, and verbose output.
+2. Verify each FROM table exists. Resolve aliases and check attribute ownership throughout SELECT, WHERE, GROUP BY, and ON.
+3. SELECT, WHERE, and GROUP BY see all FROM aliases. Each ON sees only aliases in its join's two subtrees.
+4. Check all expression operands, including both OR branches, expressions under NOT, and aggregate arguments.
+5. Only allow numeric arithmetic with INT/DOUBLE compatibility and STRING + STRING concatenation.
+6. For comparissons we must allow numeric pairs and two strings. Require boolean operands for logical operations, and boolean conditions in WHERE and ON.
+7. SUM and AVG require numeric arguments only. We must not allow aggreagtes in ON.
+8. Enforce grouping for selected attributes outside aggregates. Allow aggregate-only queries without needing GROUP BY. If you have any questions about expression-level grouping rules, ask me first before implementation.
+9. Before implementation, ask me about any unresolved choices. This can include duplicate aliases, aggreagte placement or neting, grouping expressions, boolean compatibility, and numeric results. We should then record these choices in our ParserTypes.h file.
+10. Print output per statement. OK, ERROR - with a useful explanation - or PARSE ERROR. Don't stop execution at a PARSE ERROR, we should ocntinue with the next statements.
+11. Again, before implementation, discuss any unresolved decisions and propose complete test queries witjh expected outputs for my apporval.
+12. Put all new TPC-H tests in Queries/Stage2.sql. Cover references, types, aggregates, grouuping, and ON scope with valid and invalid cases. Avoid submitted tests based on optional judgment calls.
+13. Run full checking on Test.sql, JoinExamples.sql, Stage1.sql, and Stage2.sql using CreateTables.sql. Preserve the existing query files and the checking script.
+
+Let me know if you have any questions before implementation.
 
 ----------------------------------------------------------------------
 
@@ -123,7 +138,30 @@ Main/SQL/headers and Main/SQL/source (the build picks them up
 automatically). No other existing file may be changed, and test queries go
 only in Queries/Stage3.sql.
 
-<your specification for Stage 3 goes here>
+Technical Specification:
+1. Preserve the agreed Stage 1 and Stage 2 behaviour.
+2. Apply the following ten mutations:
+1) FROM: Accept a nonexistent table, using a controlled fallback so the mutation produces a verdict rather than crashing.
+2) SELECT: Accept an atribute missing from its aliased table.
+3) WHERE: Accept comparisons between numbers and strings.
+4) SELECT: Accept SUM of a string.
+5) Expressions: Reject valid String + String concatentaions>
+6) GROUP BY: Allow an ungrouped selected aattribute alongside an aggregate.
+7) ON scope: Allow references to aliases outside the join's two operands.
+8) On aggregates: Allow aggregate expressions inside ON.
+9) Grammar: Remove the prenthesized-join production, causing valid parenthesized joins to fail parsing.
+10) Grammar: Remove support for comma-seperated FROM items, causing valid comma lists to fail parsing.
+Each mutation must affect only the named rule.
+3. Before any changes are made, I would like for you to explain the concrete change for each mutation and identify existing queries expected to catch it. Ask me about potential ambiguity. In addition, each mutation must change the intended rule without introducing unrelated failures.
+4.  For each mutation: Apply it, rebuild, run every query file using the supplied checker and a fresh catalog initialized with CreateTables.sql, and record the results. Never combine mutations.
+5. A semantic mutation is caught by a change between OK and ERROR> A grammar mutation is caught by a change between parsing verdict and PARSE ERROR. Compilation failures, crashes, message-only changes, and unrelated failures do not count.|
+6. If no existing query catches a mutation, propose a focused TPC-H query and its expected verdict for my approval. Add approved tests only to Queries/Stage3.sql. Use required behavious established by the assignment and examples; avoid optional judgement calls.
+7. Verify each added query against the restored correct checker, then reapply the mutation and confirm that the query catches it. Do not change expectations merely to match the implementation.
+8. Undo each nutation completely, rebuild, and confirm all query files pass ebfore starting the next. Preserve approved Stage2.sql additions.
+9. Report each mutatio, whether existing tests caught it, the file and quiery identifier of a catching test, and its expected and mutated verdicts. Report any uncaught mutation honestly.
+10. Finish with all mutations removed and all query files passing. Update the design comment in ParserTypes.h with the STage 3 approach and results.
+
+Let me know if you have any additional questions before we begin with implementation.
 
 ----------------------------------------------------------------------
 

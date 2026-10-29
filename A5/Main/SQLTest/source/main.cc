@@ -160,11 +160,12 @@ int main (int numArgs, char **args) {
 			if (verbose)
 				final->printSFWQuery ();
 
-			// ****************************************************************
-			// right now, every query that parses is reported as OK.  The
-			// semantic check of the query against allTables goes here
-			// ****************************************************************
-			cout << "OK\n";
+			// check the query against the tables in the catalog
+			string error = final->checkSFWQuery (allTables);
+			if (error == "")
+				cout << "OK\n";
+			else
+				cout << "ERROR: " << error << "\n";
 
 			delete final;
 		}
